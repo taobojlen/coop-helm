@@ -1,0 +1,42 @@
+{{- if not .Values.bootstrapOnly }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "coop.name" . }}-migrate
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.migrations.deadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: migrations
+    spec:
+      {{- include "coop.podSecurity" . | nindent 6 }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ .Values.images.migrations | quote }}
+          securityContext:
+            {{- include "coop.containerSecurity" . | nindent 12 }}
+            runAsNonRoot: true
+          command: [sh, -ec]
+          args:
+            - |
+              for database in api-server-pg scylla clickhouse; do
+                npm run db:create -- --db "$database" --env prod
+                npm run db:update -- --db "$database" --env prod
+              done
+          env:
+            {{- include "coop.env" . | nindent 12 }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+{{- end }}

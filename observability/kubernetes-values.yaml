@@ -1,0 +1,111 @@
+# Separate release: does not update Coop or the feeder.
+# Chart: opentelemetry-collector 0.178.1; image: 0.163.2.
+mode: daemonset
+fullnameOverride: coop-k8s-metrics
+image:
+  repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s
+  tag: 0.163.2
+command:
+  name: otelcol-k8s
+service:
+  enabled: false
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: ['']
+      resources: [nodes/stats]
+      verbs: [get]
+extraEnvs:
+  - name: HONEYCOMB_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: coop-honeycomb
+        key: api-key
+  - name: K8S_NODE_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.hostIP
+resources:
+  requests: { cpu: 25m, memory: 64Mi }
+  limits: { cpu: 200m, memory: 192Mi }
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+ports:
+  otlp: { enabled: false }
+  otlp-http: { enabled: false }
+  jaeger-compact: { enabled: false }
+  jaeger-thrift: { enabled: false }
+  jaeger-grpc: { enabled: false }
+  zipkin: { enabled: false }
+  metrics: { enabled: false }
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    otlp: null
+    prometheus: null
+    kubelet_stats:
+      collection_interval: 60s
+      auth_type: serviceAccount
+      endpoint: https://${env:K8S_NODE_IP}:10250
+      insecure_skip_verify: false
+      metric_groups: [pod]
+      metrics:
+        k8s.pod.uptime:
+          enabled: true
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_mib: 150
+      spike_limit_mib: 30
+      limit_percentage: null
+      spike_limit_percentage: null
+    filter/coop:
+      error_mode: propagate
+      metrics:
+        metric:
+          - 'resource.attributes["k8s.namespace.name"] != "coop"'
+          - 'not IsMatch(resource.attributes["k8s.pod.name"], "^coop-coop-(api|worker|web|postgresql|redis|scylla|clickhouse)-")'
+          - 'not IsMatch(name, "^k8s\\.pod\\.(cpu\\.(usage|time)|memory\\.(usage|working_set|rss)|uptime)$")'
+    resource:
+      attributes:
+        - key: service.name
+          value: coop-kubernetes
+          action: upsert
+    batch:
+      timeout: 5s
+      send_batch_size: 256
+      send_batch_max_size: 512
+  exporters:
+    debug: null
+    otlp_grpc/honeycomb:
+      endpoint: api.honeycomb.io:443
+      headers:
+        x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+      sending_queue:
+        queue_size: 60
+      retry_on_failure:
+        max_elapsed_time: 120s
+  service:
+    telemetry:
+      metrics:
+        readers:
+          - pull:
+              exporter:
+                prometheus:
+                  host: 127.0.0.1
+                  port: 8888
+    pipelines:
+      traces: null
+      logs: null
+      metrics:
+        receivers: [kubelet_stats]
+        processors: [memory_limiter, filter/coop, resource, batch]
+        exporters: [otlp_grpc/honeycomb]

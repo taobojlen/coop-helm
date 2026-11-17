@@ -1,0 +1,57 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "coop.name" . }}-internal
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "coop.name" . }}-web
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress]
+  {{- if .Values.networkPolicy.webIngressFrom }}
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.webIngressFrom | nindent 8 }}
+      ports: [{ port: 8080, protocol: TCP }]
+  {{- else }}
+  ingress: []
+  {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "coop.name" . }}-application-egress
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [api, worker, job, migrations, test, jetstream]
+  policyTypes: [Egress]
+  egress:
+    {{- toYaml .Values.networkPolicy.applicationEgress | nindent 4 }}
+{{- end }}

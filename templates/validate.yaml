@@ -1,0 +1,35 @@
+{{- $_ := required "externalUrl is required" .Values.externalUrl -}}
+{{- $_ := required "secrets.existingSecret is required" .Values.secrets.existingSecret -}}
+{{- if not (regexMatch "^https://(\\[[0-9a-fA-F:]+\\]|[a-zA-Z0-9.-]+)(:[0-9]+)?$" .Values.externalUrl) -}}
+{{- fail "externalUrl must be an HTTPS origin without a trailing slash" -}}
+{{- end -}}
+{{- if and .Release.IsInstall (not .Values.bootstrapOnly) -}}
+{{- fail "Initial install requires --set bootstrapOnly=true; then helm upgrade with --set bootstrapOnly=false" -}}
+{{- end -}}
+{{- if and .Values.scylla.enabled (not .Values.networkPolicy.enabled) -}}
+{{- fail "Bundled Scylla requires networkPolicy.enabled=true; use external authenticated Scylla otherwise" -}}
+{{- end -}}
+{{- range $service := list "postgresql" "scylla" "clickhouse" "redis" -}}
+{{- $_ := include "coop.host" (dict "root" $ "service" $service) -}}
+{{- $image := (index $.Values $service).image -}}
+{{- if or (not (regexMatch "(@sha256:[a-fA-F0-9]{64}|:[^/:@]+)$" $image)) (regexMatch ":(latest|edge)$" $image) -}}
+{{- fail (printf "%s.image must specify a pinned image" $service) -}}
+{{- end -}}
+{{- end -}}
+{{- range $component, $image := .Values.images -}}
+{{- if or (not (regexMatch "(@sha256:[a-fA-F0-9]{64}|:[^/:@]+)$" $image)) (regexMatch ":(latest|edge)$" $image) -}}
+{{- fail (printf "images.%s must specify a pinned image" $component) -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.postgresql.enabled .Values.postgresql.ssl -}}
+{{- fail "Bundled PostgreSQL does not configure TLS; use postgresql.ssl=false or an external service" -}}
+{{- end -}}
+{{- if and .Values.clickhouse.enabled (ne .Values.clickhouse.protocol "http") -}}
+{{- fail "Bundled ClickHouse does not configure TLS; use clickhouse.protocol=http or an external service" -}}
+{{- end -}}
+{{- if and .Values.redis.enabled (or .Values.redis.tls (ne .Values.redis.username "default")) -}}
+{{- fail "Bundled Redis requires redis.tls=false and redis.username=default; use an external service for TLS or ACL users" -}}
+{{- end -}}
+{{- if and .Values.scylla.enabled (ne .Values.scylla.datacenter "datacenter1") -}}
+{{- fail "Bundled Scylla uses datacenter1; use an external service for another datacenter" -}}
+{{- end -}}

@@ -1,0 +1,62 @@
+{{- if .Values.clickhouse.enabled }}
+{{ include "coop.storage" (dict "root" . "service" "clickhouse") }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coop.name" . }}-clickhouse
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  ports: [{ name: http, port: {{ .Values.clickhouse.port }}, targetPort: 8123 }]
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: clickhouse
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "coop.name" . }}-clickhouse
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "coop.name" . }}-clickhouse
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: clickhouse
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: clickhouse
+    spec:
+      {{- include "coop.podSecurity" . | nindent 6 }}
+      containers:
+        - name: clickhouse
+          image: {{ .Values.clickhouse.image | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          env:
+            - { name: CLICKHOUSE_USER, value: {{ .Values.clickhouse.username | quote }} }
+            - { name: CLICKHOUSE_DB, value: {{ .Values.clickhouse.database | quote }} }
+            - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: '1' }
+            - name: CLICKHOUSE_PASSWORD
+              {{- include "coop.secret" (dict "root" . "key" "clickhouse") | nindent 14 }}
+          ports: [{ name: http, containerPort: 8123 }]
+          startupProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+          resources:
+            {{- toYaml .Values.clickhouse.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/clickhouse }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "coop.name" . }}-clickhouse
+{{- end }}

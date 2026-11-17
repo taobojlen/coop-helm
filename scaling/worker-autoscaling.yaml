@@ -1,0 +1,71 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coop-worker-scaler-redis
+  namespace: coop
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: coop
+      app.kubernetes.io/component: redis
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keda
+          podSelector:
+            matchLabels:
+              app: keda-operator
+      ports:
+        - { port: 6379, protocol: TCP }
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: coop-worker-redis
+  namespace: coop
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: coop-secrets
+      key: redis-password
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: coop-worker
+  namespace: coop
+spec:
+  scaleTargetRef:
+    name: coop-coop-worker
+    envSourceContainerName: worker
+  pollingInterval: 30
+  minReplicaCount: 1
+  maxReplicaCount: 2
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+  triggers:
+    - type: redis
+      metadata:
+        address: coop-coop-redis.coop.svc.cluster.local:6379
+        usernameFromEnv: REDIS_USER
+        listName: bull:item-submission:wait
+        listLength: '1000'
+        databaseIndex: '0'
+        enableTLS: 'false'
+      authenticationRef:
+        name: coop-worker-redis

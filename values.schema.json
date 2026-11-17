@@ -1,0 +1,314 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "bootstrapOnly",
+    "externalUrl",
+    "secrets",
+    "images"
+  ],
+  "properties": {
+    "bootstrapOnly": {
+      "type": "boolean"
+    },
+    "externalUrl": {
+      "type": "string"
+    },
+    "secrets": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "keys"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "keys": {
+          "type": "object",
+          "required": [
+            "session",
+            "postgresql",
+            "scylla",
+            "clickhouse",
+            "redis"
+          ],
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "images": {
+      "type": "object",
+      "required": [
+        "api",
+        "web",
+        "worker",
+        "migrations"
+      ],
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "api": {
+      "$ref": "#/definitions/workload"
+    },
+    "worker": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/workload"
+        },
+        {
+          "properties": {
+            "autoscaling": {
+              "type": "object",
+              "required": [
+                "enabled"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "web": {
+      "$ref": "#/definitions/workload"
+    },
+    "jetstream": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^wss://"
+        },
+        "itemTypeId": {
+          "type": "string"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "apiKeySecretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "enum": [
+            "legacy",
+            "v2"
+          ]
+        },
+        "batchSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "flushIntervalMs": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 5000
+        },
+        "maxBufferItems": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "maxBufferBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 33554432
+        },
+        "maxBatchBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        }
+      }
+    },
+    "extraEnv": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "postgresql": {
+      "$ref": "#/definitions/database"
+    },
+    "scylla": {
+      "$ref": "#/definitions/database"
+    },
+    "clickhouse": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/database"
+        },
+        {
+          "properties": {
+            "protocol": {
+              "enum": [
+                "http",
+                "https"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "redis": {
+      "$ref": "#/definitions/database"
+    },
+    "migrations": {
+      "type": "object",
+      "properties": {
+        "deadlineSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "instrumentationImage",
+        "endpoint",
+        "existingSecret",
+        "apiKeySecretKey",
+        "environment",
+        "metricExportIntervalMs",
+        "api",
+        "worker"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "instrumentationImage": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https://[^/]+$"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "apiKeySecretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "environment": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]+$"
+        },
+        "metricExportIntervalMs": {
+          "type": "integer",
+          "minimum": 10000
+        },
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "traceSampleRatio"
+          ],
+          "properties": {
+            "traceSampleRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "worker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "traceSampleRatio"
+          ],
+          "properties": {
+            "traceSampleRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "workload": {
+      "type": "object",
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "host",
+        "port",
+        "username",
+        "image",
+        "storage"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storage": {
+          "type": "object",
+          "required": [
+            "size"
+          ],
+          "properties": {
+            "size": {
+              "type": "string",
+              "minLength": 1
+            },
+            "className": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

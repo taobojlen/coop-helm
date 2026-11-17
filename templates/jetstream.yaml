@@ -1,0 +1,90 @@
+{{- if and (or .Values.jetstream.enabled .Values.jetstream.itemTypeId) (not .Values.bootstrapOnly) }}
+{{- $typeId := required "jetstream.itemTypeId is required" .Values.jetstream.itemTypeId }}
+{{- $secret := required "jetstream.existingSecret is required" .Values.jetstream.existingSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "coop.name" . }}-jetstream
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+data:
+  jetstream.mjs: |
+    {{- .Files.Get "files/jetstream.mjs" | nindent 4 }}
+{{- if .Values.jetstream.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coop.name" . }}-jetstream
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: jetstream
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ printf "%s%s" (.Files.Get "files/jetstream.mjs") (toJson .Values.jetstream) | sha256sum }}
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: jetstream
+    spec:
+      {{- include "coop.podSecurity" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: jetstream
+          image: {{ .Values.images.api | quote }}
+          command: [node, /feeder/jetstream.mjs]
+          securityContext:
+            {{- include "coop.containerSecurity" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - { name: JETSTREAM_URL, value: {{ .Values.jetstream.url | quote }} }
+            - { name: ITEM_TYPE_ID, value: {{ $typeId | quote }} }
+            - { name: JETSTREAM_FORMAT, value: {{ .Values.jetstream.format | quote }} }
+            - { name: BATCH_SIZE, value: {{ .Values.jetstream.batchSize | quote }} }
+            - { name: FLUSH_INTERVAL_MS, value: {{ .Values.jetstream.flushIntervalMs | quote }} }
+            - { name: MAX_BUFFER_ITEMS, value: {{ .Values.jetstream.maxBufferItems | quote }} }
+            - { name: MAX_BUFFER_BYTES, value: {{ .Values.jetstream.maxBufferBytes | quote }} }
+            - { name: MAX_BATCH_BYTES, value: {{ .Values.jetstream.maxBatchBytes | quote }} }
+            - { name: COOP_URL, value: {{ printf "http://%s-api:8080" (include "coop.name" .) | quote }} }
+            - name: COOP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret | quote }}
+                  key: {{ .Values.jetstream.apiKeySecretKey | quote }}
+          ports: [{ name: health, containerPort: 8090 }]
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.jetstream.resources | nindent 12 }}
+          volumeMounts:
+            - { name: script, mountPath: /feeder, readOnly: true }
+      volumes:
+        - name: script
+          configMap:
+            name: {{ include "coop.name" . }}-jetstream
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coop.name" . }}-jetstream
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  ports: [{ name: health, port: 8090, targetPort: health }]
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: jetstream
+{{- end }}
+{{- end }}

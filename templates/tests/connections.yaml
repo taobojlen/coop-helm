@@ -1,0 +1,115 @@
+{{- if not .Values.bootstrapOnly }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "coop.name" . }}-test-connections
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  {{- include "coop.podSecurity" . | nindent 2 }}
+  restartPolicy: Never
+  initContainers:
+    - name: http
+      image: {{ .Values.images.web | quote }}
+      command: [curl]
+      args:
+        - --fail
+        - --show-error
+        - --silent
+        - --head
+        - --fail-early
+        - --retry
+        - '10'
+        - --retry-connrefused
+        - --retry-delay
+        - '1'
+        - --max-time
+        - '30'
+        - {{ printf "http://%s-web/" (include "coop.name" .) | quote }}
+        - {{ printf "http://%s-web/api/v1/ready" (include "coop.name" .) | quote }}
+        {{- if .Values.jetstream.enabled }}
+        - {{ printf "http://%s-jetstream:8090/readyz" (include "coop.name" .) | quote }}
+        {{- end }}
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { memory: 64Mi }
+  containers:
+    - name: postgresql
+      image: {{ .Values.postgresql.image | quote }}
+      command: [psql]
+      args: [-v, ON_ERROR_STOP=1, -c, 'SELECT 1']
+      env:
+        - { name: PGHOST, value: {{ include "coop.host" (dict "root" . "service" "postgresql") | quote }} }
+        - { name: PGPORT, value: {{ .Values.postgresql.port | quote }} }
+        - { name: PGUSER, value: {{ .Values.postgresql.username | quote }} }
+        - { name: PGDATABASE, value: {{ .Values.postgresql.database | quote }} }
+        - { name: PGSSLMODE, value: {{ ternary "require" "disable" .Values.postgresql.ssl | quote }} }
+        - name: PGPASSWORD
+          {{- include "coop.secret" (dict "root" . "key" "postgresql") | nindent 10 }}
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { memory: 64Mi }
+    - name: redis
+      image: {{ .Values.redis.image | quote }}
+      command: [redis-cli]
+      args:
+        - -e
+        - -h
+        - {{ include "coop.host" (dict "root" . "service" "redis") | quote }}
+        - -p
+        - {{ .Values.redis.port | quote }}
+        - --user
+        - {{ .Values.redis.username | quote }}
+        {{- if .Values.redis.tls }}
+        - --tls
+        {{- end }}
+        - ping
+      env:
+        - name: REDISCLI_AUTH
+          {{- include "coop.secret" (dict "root" . "key" "redis") | nindent 10 }}
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { memory: 64Mi }
+    - name: clickhouse
+      image: {{ .Values.images.web | quote }}
+      command: [curl]
+      args:
+        - --fail
+        - --silent
+        - --show-error
+        - --max-time
+        - '30'
+        - --header
+        - {{ printf "X-ClickHouse-User: %s" .Values.clickhouse.username | quote }}
+        - --header
+        - 'X-ClickHouse-Key: $(CLICKHOUSE_PASSWORD)'
+        - {{ printf "%s://%s:%v/?database=%s&query=SELECT%%201" .Values.clickhouse.protocol (include "coop.host" (dict "root" . "service" "clickhouse")) .Values.clickhouse.port .Values.clickhouse.database | quote }}
+      env:
+        - name: CLICKHOUSE_PASSWORD
+          {{- include "coop.secret" (dict "root" . "key" "clickhouse") | nindent 10 }}
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { memory: 64Mi }
+    - name: scylla
+      image: {{ .Values.scylla.image | quote }}
+      command: [cqlsh]
+      args:
+        - {{ include "coop.host" (dict "root" . "service" "scylla") | splitList "," | first | trim | quote }}
+        - {{ .Values.scylla.port | quote }}
+        - -u
+        - {{ .Values.scylla.username | quote }}
+        - -p
+        - $(SCYLLA_PASSWORD)
+        - -e
+        - SELECT keyspace_name FROM system_schema.keyspaces
+      env:
+        - name: SCYLLA_PASSWORD
+          {{- include "coop.secret" (dict "root" . "key" "scylla") | nindent 10 }}
+      resources:
+        requests: { cpu: 10m, memory: 64Mi }
+        limits: { memory: 128Mi }
+{{- end }}

@@ -1,0 +1,265 @@
+mode: deployment
+fullnameOverride: coop-k8s-health
+image:
+  repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s
+  tag: 0.163.2
+command:
+  name: otelcol-k8s
+service:
+  enabled: false
+clusterRole:
+  create: true
+  rules:
+  - apiGroups:
+    - ''
+    resources:
+    - events
+    verbs:
+    - get
+    - list
+    - watch
+extraEnvs:
+- name: HONEYCOMB_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: coop-honeycomb
+      key: api-key
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 192Mi
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  seccompProfile:
+    type: RuntimeDefault
+ports:
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+  metrics:
+    enabled: false
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    otlp: null
+    prometheus: null
+    k8s_cluster:
+      auth_type: serviceAccount
+      namespaces:
+      - coop
+      collection_interval: 60s
+    k8s_objects/coop:
+      auth_type: serviceAccount
+      objects:
+      - name: events
+        mode: watch
+        exclude_watch_type:
+        - DELETED
+        - BOOKMARK
+        - ERROR
+        namespaces:
+        - coop
+        field_selector: involvedObject.kind!=Node
+    k8s_objects/node:
+      auth_type: serviceAccount
+      objects:
+      - name: events
+        mode: watch
+        exclude_watch_type:
+        - DELETED
+        - BOOKMARK
+        - ERROR
+        field_selector: involvedObject.kind=Node,involvedObject.name=prosthetic-conscience
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_mib: 150
+      spike_limit_mib: 30
+      limit_percentage: null
+      spike_limit_percentage: null
+    filter/coop:
+      error_mode: propagate
+      metrics:
+        metric:
+        - resource.attributes["k8s.namespace.name"] != "coop"
+        - name != "k8s.container.restarts" and name != "k8s.pod.phase" and name !=
+          "k8s.daemonset.current_scheduled_nodes" and name != "k8s.daemonset.desired_scheduled_nodes"
+          and name != "k8s.statefulset.desired_pods" and name != "k8s.statefulset.ready_pods"
+          and name != "k8s.deployment.available" and name != "k8s.deployment.desired"
+          and name != "k8s.job.failed_pods" and name != "k8s.cronjob.active_jobs"
+    resource:
+      attributes:
+      - key: service.name
+        value: coop-kubernetes-health
+        action: upsert
+    batch:
+      timeout: 5s
+      send_batch_size: 256
+      send_batch_max_size: 512
+    transform/events:
+      error_mode: propagate
+      log_statements:
+      - context: log
+        statements:
+        - set(cache["event"], body) where IsMap(body)
+        - set(cache["event"], body["object"]) where IsMap(body) and IsMap(body["object"])
+        - set(attributes["watch-type"], body["type"]) where IsMap(body) and IsMap(body["object"])
+        - set(attributes["reason"], cache["event"]["reason"])
+        - set(attributes["event.count"], cache["event"]["count"])
+        - set(attributes["k8s.namespace.name"], cache["event"]["metadata"]["namespace"])
+        - set(attributes["k8s.namespace.name"], cache["event"]["involvedObject"]["namespace"])
+          where cache["event"]["involvedObject"]["namespace"] != nil
+        - set(attributes["k8s.pod.name"], cache["event"]["involvedObject"]["name"])
+          where cache["event"]["involvedObject"]["kind"] == "Pod"
+        - set(attributes["k8s.node.name"], cache["event"]["source"]["host"]) where
+          IsMap(cache["event"]["source"]) and cache["event"]["source"]["host"] !=
+          nil
+        - set(attributes["k8s.node.name"], cache["event"]["involvedObject"]["name"])
+          where cache["event"]["involvedObject"]["kind"] == "Node"
+        - set(severity_text, cache["event"]["type"])
+        - set(attributes["severity_text"], severity_text)
+        - set(severity_number, SEVERITY_NUMBER_INFO) where severity_text == "Normal"
+        - set(severity_number, SEVERITY_NUMBER_WARN) where severity_text == "Warning"
+  exporters:
+    debug: null
+    otlp_grpc/honeycomb:
+      endpoint: api.honeycomb.io:443
+      headers:
+        x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+      sending_queue: &id001
+        queue_size: 60
+      retry_on_failure: &id002
+        max_elapsed_time: 120s
+    otlp_grpc/events:
+      endpoint: api.honeycomb.io:443
+      headers:
+        x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+        x-honeycomb-dataset: k8s-events
+      sending_queue: *id001
+      retry_on_failure: *id002
+  service:
+    telemetry:
+      metrics:
+        readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: 8888
+    pipelines:
+      traces: null
+      logs:
+        receivers:
+        - k8s_objects/coop
+        - k8s_objects/node
+        processors:
+        - memory_limiter
+        - transform/events
+        - resource
+        - batch
+        exporters:
+        - otlp_grpc/events
+      metrics:
+        receivers:
+        - k8s_cluster
+        processors:
+        - memory_limiter
+        - filter/coop
+        - resource
+        - batch
+        exporters:
+        - otlp_grpc/honeycomb
+replicaCount: 1
+rollout:
+  strategy: Recreate
+serviceAccount:
+  name: coop-k8s-health
+extraManifests:
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: coop-k8s-health
+    namespace: coop
+  rules:
+  - apiGroups:
+    - ''
+    resources:
+    - persistentvolumeclaims
+    - pods
+    - pods/status
+    - replicationcontrollers
+    - replicationcontrollers/status
+    - resourcequotas
+    - services
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - discovery.k8s.io
+    resources:
+    - endpointslices
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - apps
+    resources:
+    - daemonsets
+    - deployments
+    - replicasets
+    - statefulsets
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - batch
+    resources:
+    - jobs
+    - cronjobs
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - autoscaling
+    resources:
+    - horizontalpodautoscalers
+    verbs:
+    - get
+    - list
+    - watch
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: coop-k8s-health
+    namespace: coop
+  subjects:
+  - kind: ServiceAccount
+    name: coop-k8s-health
+    namespace: coop
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: coop-k8s-health

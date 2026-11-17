@@ -1,0 +1,46 @@
+{{- if not .Values.bootstrapOnly }}
+{{- range $job, $schedule := .Values.jobs.schedules }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  {{- $name := printf "%s-%s" (include "coop.name" $) ($job | lower) }}
+  name: {{ printf "%s-%s" ($name | trunc 43 | trimSuffix "-") ($name | sha256sum | trunc 8) }}
+  labels:
+    {{- include "coop.labels" $ | nindent 4 }}
+spec:
+  schedule: {{ $schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/instance: {{ $.Release.Name }}
+            app.kubernetes.io/component: job
+        spec:
+          {{- include "coop.podSecurity" $ | nindent 10 }}
+          restartPolicy: Never
+          containers:
+            - name: job
+              image: {{ $.Values.images.worker | quote }}
+              args: [node, bin/run-worker-or-job.js, {{ $job | quote }}]
+              securityContext:
+                {{- include "coop.containerSecurity" $ | nindent 16 }}
+                runAsNonRoot: true
+                runAsUser: 1001
+              env:
+                {{- include "coop.env" $ | nindent 16 }}
+                {{- with $.Values.extraEnv }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              resources:
+                {{- toYaml $.Values.jobs.resources | nindent 16 }}
+{{- end }}
+{{- end }}

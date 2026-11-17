@@ -1,0 +1,105 @@
+{{- if not .Values.bootstrapOnly }}
+{{- range $component := list "api" "worker" }}
+{{- $settings := index $.Values $component }}
+{{- $envContext := merge (dict "otelServiceName" (printf "coop-%s" $component)) $ }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coop.name" $ }}-{{ $component }}
+  labels:
+    {{- include "coop.labels" $ | nindent 4 }}
+spec:
+  {{- if not (and (eq $component "worker") $.Values.worker.autoscaling.enabled) }}
+  replicas: {{ $settings.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $component }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ printf "%s%s" (include "coop.env" $envContext) (toJson $.Values.extraEnv) | sha256sum }}
+        {{- if $.Values.observability.enabled }}
+        checksum/observability: {{ printf "%s%s" (toJson $.Values.observability) ($.Files.Get "files/otel-bootstrap.cjs") | sha256sum }}
+        {{- end }}
+      labels:
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/component: {{ $component }}
+    spec:
+      {{- include "coop.podSecurity" $ | nindent 6 }}
+      {{- if $.Values.observability.enabled }}
+      securityContext:
+        fsGroup: 1001
+      initContainers:
+        - name: otel-dependencies
+          image: {{ required "observability.instrumentationImage is required" $.Values.observability.instrumentationImage | quote }}
+          command: [sh, -ec, 'cp -R /autoinstrumentation/node_modules /opt/coop-otel/']
+          securityContext:
+            {{- include "coop.containerSecurity" $ | nindent 12 }}
+            runAsNonRoot: true
+            runAsUser: 1001
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: otel-dependencies, mountPath: /opt/coop-otel }
+      volumes:
+        - name: otel-dependencies
+          emptyDir: {}
+        - name: otel-bootstrap
+          configMap:
+            name: {{ include "coop.name" $ }}-otel
+      {{- end }}
+      containers:
+        - name: {{ $component }}
+          image: {{ index $.Values.images $component | quote }}
+          {{- if eq $component "worker" }}
+          args: [node, bin/run-worker-or-job.js, ItemProcessingWorker]
+          {{- end }}
+          securityContext:
+            {{- include "coop.containerSecurity" $ | nindent 12 }}
+            runAsNonRoot: true
+            runAsUser: 1001
+          env:
+            {{- include "coop.env" $envContext | nindent 12 }}
+            {{- with $.Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if $.Values.observability.enabled }}
+            {{- include "coop.otelEnv" (dict "root" $ "component" $component) | nindent 12 }}
+            {{- end }}
+          {{- if $.Values.observability.enabled }}
+          volumeMounts:
+            - { name: otel-dependencies, mountPath: /opt/coop-otel, readOnly: true }
+            - { name: otel-bootstrap, mountPath: /opt/coop-otel-config, readOnly: true }
+          {{- end }}
+          {{- if eq $component "api" }}
+          ports: [{ name: http, containerPort: 8080 }]
+          startupProbe:
+            httpGet: { path: /api/v1/ready, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /api/v1/ready, port: http }
+          livenessProbe:
+            httpGet: { path: /api/v1/ready, port: http }
+            periodSeconds: 20
+          {{- end }}
+          resources:
+            {{- toYaml $settings.resources | nindent 12 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coop.name" . }}-api
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  ports: [{ name: http, port: 8080, targetPort: http }]
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: api
+{{- end }}

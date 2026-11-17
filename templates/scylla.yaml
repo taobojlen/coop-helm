@@ -1,0 +1,70 @@
+{{- if .Values.scylla.enabled }}
+{{ include "coop.storage" (dict "root" . "service" "scylla") }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coop.name" . }}-scylla
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  ports: [{ name: cql, port: {{ .Values.scylla.port }}, targetPort: 9042 }]
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: scylla
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "coop.name" . }}-scylla
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "coop.name" . }}-scylla
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: scylla
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: scylla
+    spec:
+      {{- include "coop.podSecurity" . | nindent 6 }}
+      containers:
+        - name: scylla
+          image: {{ .Values.scylla.image | quote }}
+          args:
+            - --smp
+            - {{ .Values.scylla.smp | quote }}
+            - --memory
+            - {{ .Values.scylla.memory | quote }}
+            - --overprovisioned
+            - '1'
+            - --developer-mode
+            - '1'
+          securityContext:
+            allowPrivilegeEscalation: false
+          ports: [{ name: cql, containerPort: 9042 }]
+          startupProbe:
+            exec:
+              command: [cqlsh, -e, 'SELECT release_version FROM system.local']
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [cqlsh, -e, 'SELECT release_version FROM system.local']
+            periodSeconds: 15
+            timeoutSeconds: 10
+          resources:
+            {{- toYaml .Values.scylla.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/scylla }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "coop.name" . }}-scylla
+{{- end }}

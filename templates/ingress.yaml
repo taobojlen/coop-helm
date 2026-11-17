@@ -1,0 +1,24 @@
+{{- if and (not .Values.bootstrapOnly) .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "coop.name" . }}
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ required "ingress.className is required" .Values.ingress.className }}
+  tls:
+    - hosts:
+        {{- toYaml (required "ingress.tlsHosts is required" .Values.ingress.tlsHosts) | nindent 8 }}
+      {{- with .Values.ingress.tlsSecretName }}
+      secretName: {{ . }}
+      {{- end }}
+  defaultBackend:
+    service:
+      name: {{ include "coop.name" . }}-web
+      port: { number: 80 }
+{{- end }}

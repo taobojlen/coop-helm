@@ -1,0 +1,151 @@
+# Install once with bootstrapOnly=true, then upgrade with false.
+bootstrapOnly: false
+externalUrl: ""
+secrets:
+  existingSecret: ""
+  keys:
+    session: session-secret
+    postgresql: postgresql-password
+    scylla: scylla-password
+    clickhouse: clickhouse-password
+    redis: redis-password
+imagePullSecrets: []
+images:
+  api: ghcr.io/roostorg/coop-server:1.2.0
+  web: ghcr.io/roostorg/coop-client:1.2.0
+  worker: ghcr.io/roostorg/coop-worker:1.2.0
+  migrations: ghcr.io/roostorg/coop-migrations:1.2.0
+api:
+  replicas: 1
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+worker:
+  replicas: 1
+  # Omit replicas from the Deployment when an external autoscaler owns it.
+  autoscaling:
+    enabled: false
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+web:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 128Mi }
+migrations:
+  deadlineSeconds: 900
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+# Extra application/worker environment, including optional integrations.
+# Values are Kubernetes EnvVar objects; use valueFrom for credentials.
+extraEnv: []
+# Traces and native OTLP metrics for the API and item-processing worker only.
+observability:
+  enabled: false
+  # Build from Coop's nodejs-instrumentation/Dockerfile; use a registry digest.
+  instrumentationImage: ""
+  endpoint: https://api.honeycomb.io:443
+  existingSecret: ""
+  apiKeySecretKey: api-key
+  environment: production
+  metricExportIntervalMs: 60000
+  api:
+    traceSampleRatio: 0.01
+  worker:
+    traceSampleRatio: 0.01
+jetstream:
+  enabled: false
+  url: wss://jetstream2.fr.hose.cam/subscribe
+  format: legacy # Set v2 with an official subscribeEvents endpoint.
+  itemTypeId: ""
+  existingSecret: ""
+  apiKeySecretKey: api-key
+  batchSize: 100
+  flushIntervalMs: 250
+  maxBufferItems: 1000
+  maxBufferBytes: 8388608
+  maxBatchBytes: 524288
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 192Mi }
+jobs:
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 768Mi }
+  schedules:
+    RefreshMRTDecisionsMaterializedViewJob: "*/5 * * * *"
+    DetectRulePassRateAnomaliesJob: "0 * * * *"
+    RetryFailedNcmecDecisionsJob: "30 20 * * *"
+postgresql:
+  enabled: true
+  image: postgres:15.18
+  host: ""
+  readHost: ""
+  port: 5432
+  database: coop
+  username: coop
+  ssl: false
+  maintenanceDatabase: postgres
+  storage: { size: 10Gi, className: null }
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+scylla:
+  enabled: true
+  image: scylladb/scylla:5.2
+  host: ""
+  port: 9042
+  username: cassandra
+  datacenter: datacenter1
+  keyspace: item_investigation_service
+  replicationFactor: 1
+  smp: 1
+  memory: 4G
+  storage: { size: 10Gi, className: null }
+  resources:
+    requests: { cpu: "1", memory: 4Gi }
+    limits: { memory: 6Gi }
+clickhouse:
+  enabled: true
+  image: clickhouse/clickhouse-server:24.3
+  host: ""
+  port: 8123
+  database: analytics
+  username: coop
+  protocol: http
+  storage: { size: 10Gi, className: null }
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1536Mi }
+redis:
+  enabled: true
+  image: redis:8.6.1-trixie
+  host: ""
+  port: 6379
+  username: default
+  tls: false
+  maxmemory: 256mb
+  storage: { size: 2Gi, className: null }
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # Tailscale uses the first label (e.g. coop), not the full tailnet domain.
+  tlsHosts: []
+  tlsSecretName: ""
+networkPolicy:
+  enabled: true
+  # Peers allowed to reach web. Both selectors match the same source Pod.
+  webIngressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: tailscale
+  # Application and migrations need external APIs and optional external DBs.
+  # Database ingress remains restricted to this release.
+  applicationEgress:
+    - {}

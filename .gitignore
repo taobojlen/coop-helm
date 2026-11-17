@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.yaml
+secrets.*.yaml
+values-private*.yaml
+values-secret*.yaml
+*.tgz
+node_modules/
+__pycache__/
+*.py[cod]
+.zed/

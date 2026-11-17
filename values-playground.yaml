@@ -1,0 +1,28 @@
+externalUrl: https://coop.example.ts.net
+secrets:
+  existingSecret: coop-secrets
+ingress:
+  enabled: true
+  className: tailscale
+  tlsHosts: [coop]
+jetstream:
+  enabled: false
+  itemTypeId: da23e732b62
+  existingSecret: working-hypothesis-bootstrap
+observability:
+  enabled: true
+  existingSecret: coop-honeycomb
+  # Imported directly into this single k3s node; see README.
+  instrumentationImage: docker.io/library/coop-otel-instrumentation:20261102-amd64
+
+# Capacity for full-feed analytics; standard Kubernetes resource limits.
+clickhouse:
+  # Newer upstream LTS fixes container memory detection on this k3s node.
+  image: clickhouse/clickhouse-server:26.8.36.3
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 3Gi }
+
+worker:
+  autoscaling:
+    enabled: true

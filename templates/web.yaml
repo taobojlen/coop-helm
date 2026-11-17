@@ -1,0 +1,108 @@
+{{- define "coop.nginx" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "coop.name" . }}-nginx
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    worker_processes auto;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr;
+    events { worker_connections 1024; }
+    http {
+      include /etc/nginx/mime.types;
+      access_log /dev/stdout;
+      map $http_x_forwarded_proto $forwarded_scheme {
+        default $scheme;
+        https https;
+      }
+      server {
+        listen 8080;
+        root /usr/share/nginx/html;
+        index index.html;
+        location ^~ /api/ {
+          proxy_pass http://{{ include "coop.name" . }}-api:8080;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $forwarded_scheme;
+          client_max_body_size 50m;
+        }
+        location / { try_files $uri $uri/ /index.html; }
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+          expires 1y;
+          add_header Cache-Control "public, immutable";
+        }
+      }
+    }
+{{- end }}
+{{- if not .Values.bootstrapOnly }}
+{{ include "coop.nginx" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coop.name" . }}-web
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  ports: [{ name: http, port: 80, targetPort: http }]
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coop.name" . }}-web
+  labels:
+    {{- include "coop.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include "coop.nginx" . | sha256sum }}
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: web
+    spec:
+      {{- include "coop.podSecurity" . | nindent 6 }}
+      containers:
+        - name: web
+          image: {{ .Values.images.web | quote }}
+          command: [nginx, -c, /etc/coop/nginx.conf, -g, 'daemon off;']
+          securityContext:
+            {{- include "coop.containerSecurity" . | nindent 12 }}
+            runAsNonRoot: true
+            runAsUser: 101
+            readOnlyRootFilesystem: true
+          ports: [{ name: http, containerPort: 8080 }]
+          startupProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /, port: http }
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/coop, readOnly: true }
+            - { name: cache, mountPath: /var/cache/nginx }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "coop.name" . }}-nginx
+        - { name: cache, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+{{- end }}
