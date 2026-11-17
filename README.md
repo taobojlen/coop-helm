@@ -6,8 +6,6 @@ This chart deploys the Coop API, web frontend, item-processing worker, scheduled
 
 The bundled topology is not highly available. It provides persistent volumes, authenticated PostgreSQL/ClickHouse/Redis, private Services, NetworkPolicies, resource budgets, and automatic upgrade migrations. Production operation also requires backups, restore exercises, monitoring, supported image versions, and capacity planning.
 
-With the default Coop 1.2.0 images, a fresh production database lacks the `view_maintenance_metadata` row required by `RefreshMRTDecisionsMaterializedViewJob`. That scheduled job fails with `No last_insert timestamp found for the table`. A production migration must seed this metadata before a fresh installation is fully operational; staging sample-data seeds are not a safe substitute.
-
 ## Prerequisites
 
 - Helm 3.14+ and Kubernetes 1.27+ with persistent volume provisioning.
