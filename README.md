@@ -1,5 +1,7 @@
 # Coop Helm chart
 
+> **Experimental and unofficial:** This is not an official Coop Helm chart. Validate it for your environment before deploying.
+
 This chart deploys the Coop API, web frontend, item-processing worker, scheduled jobs, and optional single-instance PostgreSQL, Scylla, ClickHouse, and Redis services. Set each service's `enabled` value to `false` to use an external service instead.
 
 The bundled topology is not highly available. It provides persistent volumes, authenticated PostgreSQL/ClickHouse/Redis, private Services, NetworkPolicies, resource budgets, and automatic upgrade migrations. Production operation also requires backups, restore exercises, monitoring, supported image versions, and capacity planning.
